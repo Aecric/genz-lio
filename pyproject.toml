@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "genz-lio"
-version = "0.1.0"
+version = "0.1.1"
 description = "Generalizable LiDAR-inertial odometry across confined and open environments"
 readme = "python/README.md"
 requires-python = ">=3.8,<3.13"

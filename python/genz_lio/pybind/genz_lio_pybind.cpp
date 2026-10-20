@@ -660,6 +660,6 @@ PYBIND11_MODULE(genz_lio_pybind, m) {
         })
         .def_property_readonly("pending_scans", &ScanBuffer::pendingScans);
 
-    m.attr("__version__") = "0.1.0";
+    m.attr("__version__") = "0.1.1";
     m.attr("__core_source_hash__") = GENZ_LIO_SOURCE_HASH;
 }

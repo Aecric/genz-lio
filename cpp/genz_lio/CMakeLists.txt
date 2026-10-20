@@ -2,7 +2,7 @@
 # Requires only Eigen, OpenMP and the vendored IKFoM / robin-map headers, so it
 # can be built standalone, wrapped for ROS 1 / ROS 2, or bound to Python.
 cmake_minimum_required(VERSION 3.16)
-project(genz_lio_core VERSION 0.1.0 LANGUAGES CXX)
+project(genz_lio_core VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
