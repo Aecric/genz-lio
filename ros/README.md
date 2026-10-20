@@ -683,6 +683,47 @@ ros2 bag record -o genz_output /Odometry /tf /tf_static
 
 ---
 
+### NCLT dataset
+
+[Download NCLT](https://robots.engin.umich.edu/nclt/).
+Use [experiments/nclt/hdl32_nclt.yaml](config/experiments/nclt/hdl32_nclt.yaml)
+as a shared configuration for **2012-01-15, 2012-04-29 and 2012-05-11**
+(Velodyne HDL-32E and Microstrain MS25). Pass its path as `config:=...`
+to the ROS 1 or ROS 2 launch command above. Adjust `common.lidar_topic` and
+`common.imu_topic` to match your prepared bag; the defaults are
+`/velodyne_points` and `/imu/data`.
+
+Prepare PointCloud2 scans from raw `velodyne_hits.bin` in the original LiDAR
+frame, retaining ring IDs and point timing, and IMU messages from `ms25.csv`
+in the original IMU axes (acceleration in m/s², angular velocity in rad/s).
+The calibration comes from [NCLT Table 4](https://robots.engin.umich.edu/nclt/nclt.pdf):
+`T_I_L = inverse(T_B_I) * T_B_L`, with translation `[0.112, 0.176, -0.247]` m.
+If your converter rotates or translates either sensor stream, adapt the
+extrinsics accordingly. The provided `velodyne_sync` clouds are already motion
+compensated and expressed in the body frame; they are not the raw input for
+this configuration.
+
+The shared configuration was evaluated offline through Python with visualization
+disabled and the voxel-map memory optimization:
+
+| Sequence | Position ATE RMSE (m) | Peak process RSS (GiB) | Processing time (s) |
+|---|---:|---:|---:|
+| 2012-01-15 | 1.764 | 14.78 | 4258.2 |
+| 2012-04-29 | 1.563 | 12.48 | 1615.1 |
+| 2012-05-11 | 2.105 | 12.14 | 3069.4 |
+
+These runs grouped raw packets into approximately 100 ms scans and assigned
+packet-end UTIME to their points, without reconstructing intra-packet firing
+times. Evaluation shifts ground-truth positions from the Segway body origin to
+the IMU origin using `p_WI = p_WB + R_WB * [-0.11, -0.18, -0.71]`, interpolates
+estimated positions at valid ground-truth timestamps (maximum interpolation gap
+0.25 s), and applies SE(3) alignment with scale fixed to one. The same settings
+were used for all three full recordings. Processing times are measured without
+playback throttling and depend on hardware; bag conversion and timing conventions
+can also affect the trajectory.
+
+---
+
 ### Convert ROS 1 bags to ROS 2
 
 Use [rosbags-convert](https://ternaris.gitlab.io/rosbags/topics/convert.html)
