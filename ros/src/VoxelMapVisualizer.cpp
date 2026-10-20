@@ -39,10 +39,10 @@ void jetColor(double v, const double vmin, const double vmax, std::uint8_t &r, s
 /// Walks an octree, collecting the planes that have changed since the last publish.
 void collectPlanes(const OctoTree *cell, const int max_layer, std::vector<Plane> &planes) {
     if (cell == nullptr || cell->layer_ > max_layer) return;
-    if (cell->plane_ptr_->is_update) planes.push_back(*cell->plane_ptr_);
+    if (cell->plane().is_update) planes.push_back(cell->plane());
 
     // A cell that fits a plane has no children worth descending into.
-    if (cell->layer_ < cell->max_layer_ && !cell->plane_ptr_->is_plane) {
+    if (cell->layer_ < cell->max_layer_ && !cell->plane().is_plane) {
         for (int i = 0; i < 8; ++i) collectPlanes(cell->leaves_[i], max_layer, planes);
     }
 }

@@ -6,8 +6,8 @@
 
 namespace genz_lio {
 
-void associateEuclidean(const PointWithCov &query, const std::vector<PointWithCov> &neighbors,
-                        PointWithCov &closest_neighbor, double &squared_closest_distance,
+void associateEuclidean(const PointWithCov &query, const std::vector<MapPoint> &neighbors,
+                        MapPoint &closest_neighbor, double &squared_closest_distance,
                         bool &updated, const double squared_point_sigma_threshold) {
   for (const auto &neighbor : neighbors) {
     const double squared_distance = (neighbor.point - query.point_world).squaredNorm();
@@ -32,8 +32,8 @@ void buildHybridResidual(const PointWithCov &pv, const OctoTree *current_octo,
 
   double radius_k = 3;
   Eigen::Vector3d p_w = pv.point_world;
-  if (current_octo->plane_ptr_->is_plane) {
-    Plane &plane = *current_octo->plane_ptr_;
+  if (current_octo->plane().is_plane) {
+    const Plane &plane = current_octo->plane();
     float dis_to_plane =
         fabs(plane.normal(0) * p_w(0) + plane.normal(1) * p_w(1) +
              plane.normal(2) * p_w(2) + plane.d);
@@ -71,8 +71,8 @@ void buildHybridResidual(const PointWithCov &pv, const OctoTree *current_octo,
         bool updated = false;
 
         // The cell is planar but the residual was rejected: fall back to its candidates.
-        PointWithCov closest_neighbor = current_octo->pv_center;
-        std::vector<PointWithCov> octo_center;
+        MapPoint closest_neighbor = current_octo->pv_center;
+        std::vector<MapPoint> octo_center;
         octo_center.push_back(std::move(closest_neighbor));
 
         associateEuclidean(pv, octo_center, closest_neighbor,
@@ -100,8 +100,8 @@ void buildHybridResidual(const PointWithCov &pv, const OctoTree *current_octo,
 
       // Planar cell whose residual was rejected.
       bool updated = false;
-      PointWithCov closest_neighbor = current_octo->pv_center;
-      std::vector<PointWithCov> octo_center;
+      MapPoint closest_neighbor = current_octo->pv_center;
+      std::vector<MapPoint> octo_center;
       octo_center.push_back(std::move(closest_neighbor));
 
       associateEuclidean(pv, octo_center, closest_neighbor,
@@ -130,7 +130,7 @@ void buildHybridResidual(const PointWithCov &pv, const OctoTree *current_octo,
       // Too few points to fit a plane, so search the temporary points instead.
       // The deepest layer cannot subdivide further, so it searches its candidates.
       bool updated = false;
-      PointWithCov closest_neighbor = current_octo->pv_center;
+      MapPoint closest_neighbor = current_octo->pv_center;
       if (!(current_octo->init_octo_)){ 
         const auto &neighbors = current_octo->temp_points_;
         associateEuclidean(pv, neighbors, closest_neighbor,
@@ -140,7 +140,7 @@ void buildHybridResidual(const PointWithCov &pv, const OctoTree *current_octo,
 
       }
       else if(current_layer == max_layer - 1){
-        std::vector<PointWithCov> octo_center;
+        std::vector<MapPoint> octo_center;
         octo_center.push_back(std::move(closest_neighbor));
         associateEuclidean(pv, octo_center, closest_neighbor,
                                             squared_closest_distance, updated,
@@ -192,8 +192,8 @@ void buildPlaneResidual(const PointWithCov &pv, const OctoTree *current_octo,
                                 double &prob, PointToPlaneMatch &plane_match) {
   double radius_k = 3;
   Eigen::Vector3d p_w = pv.point_world;
-  if (current_octo->plane_ptr_->is_plane) {
-    Plane &plane = *current_octo->plane_ptr_;
+  if (current_octo->plane().is_plane) {
+    const Plane &plane = current_octo->plane();
     float dis_to_plane =
         fabs(plane.normal(0) * p_w(0) + plane.normal(1) * p_w(1) +
              plane.normal(2) * p_w(2) + plane.d);
@@ -258,11 +258,11 @@ void buildPointResidual(const PointWithCov &pv, const OctoTree *current_octo,
   const int max_layer = current_octo->max_layer_;
 
   Eigen::Vector3d p_w = pv.point_world;
-  if (current_octo->plane_ptr_->is_plane) {
+  if (current_octo->plane().is_plane) {
     bool updated = false;
 
-    PointWithCov closest_neighbor = current_octo->pv_center;
-    std::vector<PointWithCov> octo_center;
+    MapPoint closest_neighbor = current_octo->pv_center;
+    std::vector<MapPoint> octo_center;
     octo_center.push_back(std::move(closest_neighbor));
 
     associateEuclidean(pv, octo_center, closest_neighbor,
@@ -286,7 +286,7 @@ void buildPointResidual(const PointWithCov &pv, const OctoTree *current_octo,
     return;
   } else {
     bool updated = false;
-    PointWithCov closest_neighbor = current_octo->pv_center;
+    MapPoint closest_neighbor = current_octo->pv_center;
     if (!(current_octo->init_octo_)){ 
       const auto &neighbors = current_octo->temp_points_;
       associateEuclidean(pv, neighbors, closest_neighbor,
@@ -296,7 +296,7 @@ void buildPointResidual(const PointWithCov &pv, const OctoTree *current_octo,
 
     }
     else if(current_layer == max_layer - 1){
-      std::vector<PointWithCov> octo_center;
+      std::vector<MapPoint> octo_center;
       octo_center.push_back(std::move(closest_neighbor));
       associateEuclidean(pv, octo_center, closest_neighbor,
                                           squared_closest_distance, updated,

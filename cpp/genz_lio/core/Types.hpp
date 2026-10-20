@@ -60,6 +60,15 @@ struct PointWithCov {
     Mat3 cov_lidar = Mat3::Zero();
 };
 
+/// Retained world-frame coordinates and covariance; scan-only fields stay in PointWithCov.
+struct MapPoint {
+    Vec3 point = Vec3::Zero();
+    Mat3 cov = Mat3::Zero();
+    MapPoint() = default;
+    MapPoint(const PointWithCov &p) : point(p.point), cov(p.cov) {}
+};
+static_assert(sizeof(MapPoint) == 96, "Preserve double map coordinates/covariance");
+
 /// A locally fitted plane and the uncertainty of its parameters.
 struct Plane {
     Vec3 center = Vec3::Zero();
