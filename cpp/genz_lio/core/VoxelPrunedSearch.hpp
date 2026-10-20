@@ -15,8 +15,8 @@
 namespace genz_lio {
 
 /// Nearest map point to the query, among those within the residual gate.
-void associateEuclidean(const PointWithCov &query, const std::vector<PointWithCov> &neighbors,
-                        PointWithCov &closest_neighbor, double &squared_closest_distance,
+void associateEuclidean(const PointWithCov &query, const std::vector<MapPoint> &neighbors,
+                        MapPoint &closest_neighbor, double &squared_closest_distance,
                         bool &updated, const double squared_point_sigma_threshold);
 
 

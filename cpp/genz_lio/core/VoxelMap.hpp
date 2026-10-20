@@ -16,6 +16,8 @@
 #include <cmath>
 #include <cstdint>
 #include <mutex>
+#include <memory>
+#include <utility>
 #include <limits>
 #include <vector>
 
@@ -31,21 +33,29 @@ extern std::atomic<int> g_plane_id;
 constexpr int kNumMatchPoints = 5;
 constexpr double degToRad(const double degrees) { return degrees * M_PI / 180.0; }
 
+/// Immutable thresholds shared by a root voxel and its descendants.
+class LayerThresholds {
+  std::shared_ptr<const std::vector<int>> values_;
+public:
+  LayerThresholds(std::vector<int> values) : values_(std::make_shared<const std::vector<int>>(std::move(values))) {}
+  LayerThresholds(std::initializer_list<int> values) : LayerThresholds(std::vector<int>(values)) {}
+  int operator[](std::size_t i) const { return (*values_)[i]; }
+  const void *storageIdentity() const { return values_.get(); }
+};
+
 class OctoTree {
 public:
-  std::vector<PointWithCov> temp_points_; // all points in an octo tree
-  std::vector<PointWithCov> new_points_;  // new points in an octo tree
-  std::vector<PointWithCov> grid_points_; // Point-to-point candidates, kept only once a plane has been fitted. A cell that
+  std::vector<MapPoint> temp_points_; // all points in an octo tree
+  std::vector<MapPoint> grid_points_; // Point-to-point candidates, kept only once a plane has been fitted. A cell that
 // fails the planarity test is subdivided instead, so its points live deeper down.
   Plane *plane_ptr_;
   int max_layer_;
-  bool indoor_mode_;
   int layer_;
   int octo_state_; // 0 is end of tree, 1 is not
   OctoTree *leaves_[8];
   double voxel_center_[3]; // x, y, z
-  PointWithCov pv_center;
-  std::vector<int> layer_point_size_;
+  MapPoint pv_center;
+  LayerThresholds layer_point_size_;
   float quater_length_;
   float planer_threshold_;
   int max_plane_update_threshold_;
@@ -67,7 +77,7 @@ public:
   bool init_grids_;           // Set once a cell first fits a plane and seeds its point-to-point candidates.
   bool update_enable_;
   bool hybrid_metric_enabled_;              // Skips storing point-to-point candidates when the hybrid metric is disabled.
-  OctoTree(int max_layer, int layer, std::vector<int> layer_point_size,
+  OctoTree(int max_layer, int layer, LayerThresholds layer_point_size,
            int max_point_size,
            int max_mature_points_size,
            float planer_threshold,
@@ -99,14 +109,27 @@ public:
     for (int i = 0; i < 8; i++) {
       leaves_[i] = nullptr;
     }
-    plane_ptr_ = new Plane;
+    plane_ptr_ = nullptr;
+  }
+
+  // Unfitted cells share a read-only empty plane instead of allocating one each.
+  const Plane &plane() const {
+    static const Plane empty;
+    return plane_ptr_ ? *plane_ptr_ : empty;
+  }
+
+  // Frozen planar cells need only their candidate points. Retain samples when
+  // future refitting is enabled or the visualizer still reads the raw samples.
+  void releaseUnusedSamples() {
+    if (init_octo_ && plane().is_plane && !update_enable_ &&
+        max_mature_points_size_ == max_points_size_ && init_grids_ && !grid_points_.empty())
+      std::vector<MapPoint>().swap(temp_points_);
   }
 
   // Used when pruning voxels that have fallen far behind the sensor.
   ~OctoTree() {
-    std::vector<PointWithCov>().swap(temp_points_);
-    std::vector<PointWithCov>().swap(new_points_);
-    std::vector<PointWithCov>().swap(grid_points_);
+    std::vector<MapPoint>().swap(temp_points_);
+    std::vector<MapPoint>().swap(grid_points_);
     if (plane_ptr_) {
         delete plane_ptr_;
         plane_ptr_ = nullptr;
@@ -128,7 +151,9 @@ public:
    * @param plane           plane to fit
    * @param new_points_num  how many of the points at the end are newly arrived
    */
-  void initPlane(const std::vector<PointWithCov> &points, Plane *plane, const int new_points_num) {
+  template <typename StoredPoint>
+  void initPlane(const std::vector<StoredPoint> &points, Plane *&plane, const int new_points_num) {
+    if (!plane) plane = new Plane;
     plane->plane_cov = Eigen::Matrix<double, 6, 6>::Zero();
 
     // Folds only the newly arrived points into the existing centre and covariance,
@@ -273,7 +298,7 @@ public:
     // On the first successful plane fit, seed the point-to-point candidates from the
 // points gathered so far.
     grid_points_.clear();
-    grid_points_.reserve(max_points_per_octo_);
+    grid_points_.reserve(std::min<std::size_t>(max_points_per_octo_, temp_points_.size()));
 
     for (const auto& point : temp_points_) {
       // Check if the point is already in the grid points
@@ -292,7 +317,7 @@ public:
   }
 
   // Folds a single point into the cell.
-  void updateCandidatePoint(const PointWithCov &point) {
+  void updateCandidatePoint(const MapPoint &point) {
     if (grid_points_.size() == max_points_per_octo_ || std::any_of(grid_points_.cbegin(), grid_points_.cend(),
                     [&](const auto &grid_point) {
                         return (grid_point.point - point.point).squaredNorm() < squared_map_resolution_;
@@ -304,14 +329,14 @@ public:
   }
 
   void clearCandidatePoints(){
-    std::vector<PointWithCov>().swap(grid_points_);
+    std::vector<MapPoint>().swap(grid_points_);
     init_grids_ = false;
   }
 
   void initialize() {
     if (temp_points_.size() > max_plane_update_threshold_) {
       initPlane(temp_points_, plane_ptr_, new_points_num_);
-      if (plane_ptr_->is_plane == true) {
+      if (plane().is_plane == true) {
         octo_state_ = 0;
                 if (temp_points_.size() > max_points_size_) {
           update_enable_ = false;
@@ -330,6 +355,7 @@ public:
       }
       init_octo_ = true;
       new_points_num_ = 0;
+      releaseUnusedSamples();
     }
   }
 
@@ -372,7 +398,7 @@ public:
             leaves_[i]->max_plane_update_threshold_) {
 
           initPlane(leaves_[i]->temp_points_, leaves_[i]->plane_ptr_, leaves_[i]->new_points_num_);
-          if (leaves_[i]->plane_ptr_->is_plane) {
+          if (leaves_[i]->plane().is_plane) {
             leaves_[i]->octo_state_ = 0;
             if (hybrid_metric_enabled_ && !leaves_[i]->init_grids_) leaves_[i]->initCandidatePoints(); 
           } else {
@@ -384,13 +410,14 @@ public:
           }
           leaves_[i]->init_octo_ = true;
           leaves_[i]->new_points_num_ = 0;
+          leaves_[i]->releaseUnusedSamples();
         }
       }
     }
   }
 
   // Reuses the two conditions under which a point-to-plane residual is rejected.
-  bool isPointOnPlane(const Plane *plane, const PointWithCov &pv) {
+  bool isPointOnPlane(const Plane *plane, const MapPoint &pv) {
 
     bool is_on_plane = false;
     const auto &point = pv.point;
@@ -422,7 +449,7 @@ public:
   }
 
   // Once enough points have fallen outside the plane, refit the cell using them.
-  void refitPlaneWithOutliers(const PointWithCov &pv) {
+  void refitPlaneWithOutliers(const MapPoint &pv) {
     if (!update_enable_) {
       if (all_points_num_ < max_mature_points_size_) {
         if (!isPointOnPlane(plane_ptr_, pv)) {
@@ -440,13 +467,13 @@ public:
         }
         }
         else {
-          if (temp_points_.size() != 0) std::vector<PointWithCov>().swap(temp_points_);
+          if (temp_points_.size() != 0) std::vector<MapPoint>().swap(temp_points_);
         }
     }
     return;
   }
 
-  void update(const PointWithCov &pv) {
+  void update(const MapPoint &pv) {
     // save the most closest point to the center of the voxel
     Eigen::Vector3d center(voxel_center_[0], voxel_center_[1], voxel_center_[2]);
     if ((pv.point - center).squaredNorm() < (pv_center.point - center).squaredNorm()) {
@@ -461,7 +488,7 @@ public:
         initialize();
       }
     } else {
-      if (plane_ptr_->is_plane) {
+      if (plane().is_plane) {
         // With a plane in place, every incoming point is also offered to the
 // point-to-point candidate set.
         if (hybrid_metric_enabled_ && init_grids_) updateCandidatePoint(pv);
@@ -480,12 +507,13 @@ public:
         } else {
           // Refit path for a cell whose point budget is exhausted and whose updates are off.
           if (max_mature_points_size_ != max_points_size_)  refitPlaneWithOutliers(pv);
+          releaseUnusedSamples();
           return;
         }
       } else {
         if (layer_ < max_layer_-1) {
           if (temp_points_.size() != 0) {
-            std::vector<PointWithCov>().swap(temp_points_);
+            std::vector<MapPoint>().swap(temp_points_);
           }
           int xyz[3] = {
             pv.point[0] > voxel_center_[0] ? 1 : 0,
@@ -501,7 +529,6 @@ public:
                 max_mature_points_size_,
                 planer_threshold_,
                 voxel_size_, max_points_per_voxel_, reduction_ratio_, hybrid_metric_enabled_);
-            leaves_[leafnum]->layer_point_size_ = layer_point_size_;
             leaves_[leafnum]->voxel_center_[0] =
                 voxel_center_[0] + (2 * xyz[0] - 1) * quater_length_;
             leaves_[leafnum]->voxel_center_[1] =
@@ -533,6 +560,7 @@ public:
         }
       }
     }
+    releaseUnusedSamples();
   }
 };
 

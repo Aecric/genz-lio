@@ -92,7 +92,7 @@ class VisualizationMap {
         if (children) return;
         const auto &samples = cell->grid_points_.empty() ? cell->temp_points_ : cell->grid_points_;
         for (const auto &sample : samples) points.push_back(sample.point);
-        if (samples.empty() && cell->plane_ptr_->is_plane) points.push_back(cell->plane_ptr_->center);
+        if (samples.empty() && cell->plane().is_plane) points.push_back(cell->plane().center);
     }
 
     template <typename Matches> static py::array_t<double> matchArray(const Matches &matches) {
@@ -558,7 +558,7 @@ PYBIND11_MODULE(genz_lio_pybind, m) {
             // owned NumPy buffer. A growing vector of every XYZ used to allocate
             // and copy the full map several times on each displayed frame.
             struct Samples {
-                const std::vector<PointWithCov> *points;
+                const std::vector<MapPoint> *points;
                 const Vec3 *center;
             };
             std::vector<Samples> leaves;
@@ -576,8 +576,8 @@ PYBIND11_MODULE(genz_lio_pybind, m) {
                 if (!points.empty()) {
                     leaves.push_back({&points, nullptr});
                     count += points.size();
-                } else if (cell->plane_ptr_->is_plane) {
-                    leaves.push_back({nullptr, &cell->plane_ptr_->center});
+                } else if (cell->plane().is_plane) {
+                    leaves.push_back({nullptr, &cell->plane().center});
                     ++count;
                 }
             };

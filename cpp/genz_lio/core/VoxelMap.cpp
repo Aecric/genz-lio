@@ -63,7 +63,6 @@ void buildVoxelMap(const std::vector<PointWithCov> &input_points, // pv_list
 
       feat_map[position]->temp_points_.push_back(p_v);
       feat_map[position]->new_points_num_++;
-      feat_map[position]->layer_point_size_ = layer_point_size;
     }
     Eigen::Vector3d center(feat_map[position]->voxel_center_[0], 
                            feat_map[position]->voxel_center_[1], 

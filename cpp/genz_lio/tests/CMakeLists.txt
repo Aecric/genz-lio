@@ -1,6 +1,6 @@
 foreach(test_name IN ITEMS core_types downsample scale_aware_voxelizer imu_processor
                           preprocessor hybrid_metric pipeline imu_lifecycle filter_update
-                          deskew_geometry plane_refit plane_degeneracy adaptive_gate scan_buffer worker_threads observation_product)
+                          deskew_geometry plane_refit plane_degeneracy adaptive_gate scan_buffer worker_threads observation_product memory_storage)
   add_executable(test_${test_name} test_${test_name}.cpp)
   target_link_libraries(test_${test_name} PRIVATE genz_lio::core)
   add_test(NAME ${test_name} COMMAND test_${test_name})
