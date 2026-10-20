@@ -682,6 +682,26 @@ the same output directory and sequence name overwrites those trajectory files.
 
 ---
 
+### NCLT dataset
+
+A shared HDL-32E/MS25 configuration is available for **2012-01-15, 2012-04-29
+and 2012-05-11**. After building this source revision, export it and run a
+prepared ROS bag:
+
+```bash
+genz_lio_pipeline export-config experiments/nclt/hdl32_nclt.yaml configs/nclt.yaml
+genz_lio_pipeline run "{path_to_bag}/{sequence}.bag" \
+    --config configs/nclt.yaml --output "results/{sequence}"
+```
+
+Add `--visualize` to open the visualizer. See the
+[NCLT input and evaluation notes](../ros/README.md#nclt-dataset) for downloads,
+sensor frames, timing, and results. The CLI accepts prepared bags, not NCLT's
+raw `.bin`/`.csv` files directly. Existing PyPI releases do not include this new
+configuration; use a source build until a release contains it.
+
+---
+
 ### Input options
 
 Inspect point counts and timing for recordings with one LiDAR and one IMU topic:
