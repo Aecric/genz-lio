@@ -32,6 +32,14 @@
   <exec_depend condition="$ROS_VERSION == 2">rclpy</exec_depend>
   <depend condition="$ROS_VERSION == 2">tf2_ros</depend>
   <depend condition="$ROS_VERSION == 2">pcl_conversions</depend>
+  <!-- run_loclite_online (fixed-map localization) -->
+  <depend condition="$ROS_VERSION == 2">std_msgs</depend>
+  <depend condition="$ROS_VERSION == 2">std_srvs</depend>
+  <depend condition="$ROS_VERSION == 2">tbb</depend>
+  <depend condition="$ROS_VERSION == 2">flann</depend>
+  <exec_depend condition="$ROS_VERSION == 2">launch_ros</exec_depend>
+  <exec_depend condition="$ROS_VERSION == 2">ament_index_python</exec_depend>
+  <test_depend condition="$ROS_VERSION == 2">tf2_msgs</test_depend>
 
   <export>
     <build_type condition="$ROS_VERSION == 1">catkin</build_type>

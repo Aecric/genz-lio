@@ -25,7 +25,11 @@ _LIDAR_TYPES = {
 }
 
 # Sections the ROS wrappers own; seeing them here is not a mistake.
-_WRAPPER_SECTIONS = {"common", "publish", "pcd_save"}
+# system / fixed_map / reloc belong to the fixed-map localization node.
+_WRAPPER_SECTIONS = {"common", "publish", "pcd_save", "system", "fixed_map", "reloc"}
+# runtime/ keys of the localization node (runtime/max_threads is the core's).
+_WRAPPER_RUNTIME_KEYS = {"publish_tf", "publish_odom", "publish_path", "imu_timeout_sec",
+                         "lidar_timeout_sec"}
 
 _SCALARS = {
     "preprocess": ["scan_line", "scan_rate", "blind_min", "blind_max", "point_filter_num"],
@@ -91,7 +95,7 @@ def load_config(path: str | Path, base: Config | None = None) -> Config:
         for key, value in (root["runtime"] or {}).items():
             if key == "max_threads":
                 config.max_threads = value
-            else:
+            elif key not in _WRAPPER_RUNTIME_KEYS:
                 unknown.append(f"runtime/{key}")
 
     for name, keys in _SCALARS.items():

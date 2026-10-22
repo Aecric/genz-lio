@@ -14,6 +14,11 @@ void ScanBuffer::resetLocked() {
     ++epoch_;
 }
 
+void ScanBuffer::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    resetLocked();
+}
+
 void ScanBuffer::setPreprocessConfig(const PreprocessConfig &config) {
     std::lock_guard<std::mutex> lock(mutex_);
     preprocessor_ = Preprocessor(config);

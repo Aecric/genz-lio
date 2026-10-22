@@ -78,6 +78,7 @@ void GenZLIO::clearMap() {
     for (auto &entry : voxel_map_) delete entry.second;
     voxel_map_.clear();
     map_built_ = false;
+    fixed_map_ = false;
     display_map_changes_.clear();
     display_map_reset_ = track_map_;
 }
@@ -112,11 +113,65 @@ GenZLIO::MapChanges GenZLIO::takeMapChanges() {
 
 void GenZLIO::reset() {
     clearMap();
+    resetFilter();
+}
+
+void GenZLIO::resetFilter() {
     imu_processor_.reset();
     voxelizer_ = ScaleAwareVoxelizer(config_.adaptive_voxelization, config_.mapping.down_sample_size);
     update_ = HybridMetricUpdate(config_);
     kf_ = EsekfState();
     installObservationModel();
+    has_initial_pose_ = false;
+}
+
+void GenZLIO::resetOdometry() {
+    if (!fixed_map_) clearMap();
+    resetFilter();
+}
+
+void GenZLIO::setFixedMap(const std::vector<Vec3> &points, const double point_cov) {
+    clearMap();
+    std::vector<PointWithCov> map_points(points.size());
+    const Mat3 cov = Mat3::Identity() * point_cov;
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        map_points[i].point = points[i];
+        map_points[i].point_world = points[i];
+        map_points[i].cov = cov;
+        map_points[i].cov_lidar = cov;
+    }
+
+    const auto &mapping = config_.mapping;
+    buildVoxelMap(map_points, mapping.voxel_size, mapping.max_layer, mapping.layer_point_size,
+                  mapping.max_points_size, mapping.max_mature_points_size,
+                  mapping.planar_threshold, config_.hybrid_metric.max_points_per_voxel,
+                  config_.hybrid_metric.reduction_ratio, config_.hybrid_metric.enable, voxel_map_);
+    map_built_ = true;
+    fixed_map_ = true;
+    if (track_map_) display_map_reset_ = true;
+}
+
+void GenZLIO::setInitialPose(const Pose &world_imu) {
+    initial_pose_ = world_imu;
+    has_initial_pose_ = true;
+}
+
+void GenZLIO::applyInitialPose() {
+    // The IMU initialization leaves the filter at the identity with gravity in
+    // the IMU frame; move both into the world frame before the first propagation.
+    state_ikfom state = kf_.get_x();
+    const Vec3 gravity = initial_pose_.rotation * state.grav.get_vect();
+    state.rot = SO3(Eigen::Quaterniond(initial_pose_.rotation).normalized());
+    state.pos = initial_pose_.translation;
+    state.vel = Vec3::Zero();
+    state.grav = S2(gravity);
+    kf_.change_x(state);
+
+    // The pose comes from a verified registration, not from scratch.
+    EsekfState::cov P = kf_.get_P();
+    for (int i = 0; i < 6; ++i) P(i, i) = 0.01;
+    kf_.change_P(P);
+    has_initial_pose_ = false;
 }
 
 std::vector<Mat3> GenZLIO::bodyCovariances(const PointCloud &cloud) const {
@@ -222,6 +277,7 @@ GenZLIO::Result GenZLIO::registerScan(const RawScan &raw_scan, const double scan
     PointCloud deskewed;
     imu_processor_.process(bundle, kf_, deskewed);
     result.timing.deskew = elapsed_ms(stage);
+    if (has_initial_pose_ && imu_processor_.initialized()) applyInitialPose();
     if (!imu_processor_.initialized() || deskewed.empty()) return result;
 
     // The first usable scan defines the map rather than being aligned to it.
@@ -270,7 +326,7 @@ GenZLIO::Result GenZLIO::registerScan(const RawScan &raw_scan, const double scan
         update_.setPoseDeviation(deviation_rotation, deviation_translation);
 
     stage = Clock::now();
-    if (!result.update_rejected) {
+    if (!result.update_rejected && !fixed_map_) {
         const auto mapping_cov = bodyCovariances(voxelized.mapping);
         foldScanIntoMap(voxelized.mapping, mapping_cov);
     }

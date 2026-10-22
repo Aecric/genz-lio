@@ -23,6 +23,7 @@ message(STATUS "GenZ-LIO: building for ROS ${GENZ_LIO_ROS_VERSION}")
 add_subdirectory(../cpp/genz_lio ${CMAKE_CURRENT_BINARY_DIR}/genz_lio_core)
 
 find_package(PCL REQUIRED COMPONENTS common io)
+get_target_property(_genz_eigen_includes genz_lio_core GENZ_LIO_EIGEN_INCLUDE_DIRS)
 
 set(GENZ_LIO_SHARED_SOURCES
   src/OdometryServer.cpp
@@ -60,6 +61,92 @@ if(GENZ_LIO_ROS_VERSION EQUAL 2)
   endif()
 
   install(TARGETS genz_lio_node DESTINATION lib/${PROJECT_NAME})
+
+  # Fixed-map pure localization (run_loclite_online), interface and cold start
+  # as in Super-LIO. KISS-Matcher (prior-free global registration) is built from
+  # the vendored source; its ROBIN dependency is fetched at configure time. Never
+  # pick up a robin/kiss_matcher left in a shared install prefix by another
+  # package (lightning-lm / hikari_loclite / Super-LIO vendor the same libraries).
+  find_package(std_srvs REQUIRED)
+  find_package(std_msgs REQUIRED)
+  find_package(TBB REQUIRED)
+  find_package(PCL REQUIRED COMPONENTS common io filters kdtree search registration)
+  if(NOT TARGET kiss_matcher::kiss_matcher_core)
+    set(USE_SYSTEM_TBB ON CACHE BOOL "Use system TBB for KISS-Matcher" FORCE)
+    set(USE_SYSTEM_ROBIN OFF CACHE BOOL "Fetch ROBIN for KISS-Matcher" FORCE)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    add_subdirectory(
+      ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/KISS-Matcher/cpp/kiss_matcher
+      ${CMAKE_BINARY_DIR}/_deps/kiss_matcher-build
+      EXCLUDE_FROM_ALL)
+  endif()
+
+  # loclite: ROS surface + relocalization shared with the se3-lio fork. The
+  # vendored GenZ-ICP uses its own Sophus and the core's tsl::robin_map.
+  add_library(loclite STATIC
+    src/loclite/fc_gate.cpp
+    src/loclite/genz_refiner.cpp
+    src/loclite/kiss_global_matcher.cpp
+    src/loclite/loc_interface.cpp
+    src/loclite/relocalizer.cpp
+    thirdparty/genz_icp/genz_icp/VoxelHashMap.cpp
+    thirdparty/genz_icp/genz_icp/Registration.cpp)
+  target_include_directories(loclite
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${PCL_INCLUDE_DIRS}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/genz_icp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../cpp/genz_lio/3rdparty)
+  target_include_directories(loclite SYSTEM BEFORE PUBLIC ${_genz_eigen_includes})
+  target_link_libraries(loclite
+    PUBLIC ${PCL_LIBRARIES}
+    PRIVATE kiss_matcher::kiss_matcher_core TBB::tbb)
+  # Keyword signature only (works with and without ament_target_dependencies).
+  foreach(dep rclcpp std_srvs std_msgs nav_msgs sensor_msgs geometry_msgs visualization_msgs
+          pcl_conversions tf2_ros)
+    if(${dep}_TARGETS)
+      target_link_libraries(loclite PUBLIC ${${dep}_TARGETS})
+    else()
+      target_link_libraries(loclite PUBLIC ${${dep}_LIBRARIES})
+      target_include_directories(loclite PUBLIC ${${dep}_INCLUDE_DIRS})
+    endif()
+  endforeach()
+
+  add_executable(run_loclite_online
+    src/run_loclite_online.cpp src/LocalizationNode.cpp src/CloudConversion.cpp)
+  target_compile_definitions(run_loclite_online PRIVATE GENZ_LIO_ROS_VERSION=2)
+  target_include_directories(run_loclite_online PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_include_directories(run_loclite_online SYSTEM BEFORE PRIVATE ${_genz_eigen_includes})
+  ament_target_dependencies(run_loclite_online
+    rclcpp sensor_msgs nav_msgs geometry_msgs visualization_msgs tf2_ros pcl_conversions)
+  if(livox_ros_driver2_FOUND)
+    ament_target_dependencies(run_loclite_online livox_ros_driver2)
+    target_compile_definitions(run_loclite_online PRIVATE GENZ_LIO_WITH_LIVOX)
+  endif()
+  target_link_libraries(run_loclite_online loclite genz_lio::core genz_lio::config yaml-cpp)
+  install(TARGETS run_loclite_online DESTINATION lib/${PROJECT_NAME})
+
+  # KISS-Matcher and its fetched ROBIN/PMC/xenium carry their own install rules,
+  # which would put static libs, headers and CMake exports into the prefix and
+  # collide in dpkg with other packages shipping the same files. Everything is
+  # linked statically, so drop them after the subtree installed.
+  # DESTDIR-aware, multiarch-libdir-aware, exact paths only.
+  include(GNUInstallDirs)
+  string(CONFIGURE [[
+    set(_genz_lio_strip_root "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}")
+    file(REMOVE_RECURSE
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_INCLUDEDIR@/kiss_matcher"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_INCLUDEDIR@/robin"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_INCLUDEDIR@/pmc"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_INCLUDEDIR@/xenium"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_LIBDIR@/cmake/kiss_matcher"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_LIBDIR@/cmake/robin"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_LIBDIR@/cmake/pmc"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_LIBDIR@/cmake/xenium"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_LIBDIR@/libkiss_matcher_core.a"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_LIBDIR@/librobin.a"
+      "${_genz_lio_strip_root}/@CMAKE_INSTALL_LIBDIR@/libpmc.a")
+  ]] _genz_lio_strip_code @ONLY)
+  install(CODE "${_genz_lio_strip_code}")
+
   install(PROGRAMS scripts/save_odometry.py DESTINATION lib/${PROJECT_NAME})
   install(DIRECTORY config launch rviz DESTINATION share/${PROJECT_NAME})
   ament_environment_hooks("${CMAKE_CURRENT_SOURCE_DIR}/env-hooks/genz_lio_fastdds.sh.in")
@@ -103,7 +190,6 @@ target_compile_definitions(genz_lio_node PRIVATE GENZ_LIO_ROS_VERSION=${GENZ_LIO
 target_include_directories(genz_lio_node PRIVATE ${PCL_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(genz_lio_node genz_lio::core genz_lio::config ${PCL_LIBRARIES} yaml-cpp)
 
-get_target_property(_genz_eigen_includes genz_lio_core GENZ_LIO_EIGEN_INCLUDE_DIRS)
 target_include_directories(genz_lio_node SYSTEM BEFORE PRIVATE ${_genz_eigen_includes})
 
 if(GENZ_LIO_BUILD_TESTS)

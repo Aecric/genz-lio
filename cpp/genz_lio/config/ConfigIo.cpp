@@ -18,7 +18,12 @@ const std::map<std::string, LidarType> kLidarTypes = {
 };
 
 /// Sections the wrappers own rather than the core; seeing them is not an error.
-const std::set<std::string> kWrapperSections = {"common", "publish", "pcd_save"};
+/// system / fixed_map / reloc belong to the fixed-map localization node.
+const std::set<std::string> kWrapperSections = {"common", "publish", "pcd_save",
+                                                "system", "fixed_map", "reloc"};
+/// runtime/ keys of the localization node (runtime/max_threads is the core's).
+const std::set<std::string> kWrapperRuntimeKeys = {"publish_tf", "publish_odom", "publish_path",
+                                                   "imu_timeout_sec", "lidar_timeout_sec"};
 
 std::string join(const std::map<std::string, LidarType> &values) {
     std::ostringstream out;
@@ -178,6 +183,7 @@ void loadConfigInto(const std::string &path, Config &config,
     if (const auto runtime = root["runtime"]) {
         std::set<std::string> seen;
         read(runtime, "max_threads", config.max_threads, seen);
+        seen.insert(kWrapperRuntimeKeys.begin(), kWrapperRuntimeKeys.end());
         collectUnknown(runtime, seen, "runtime/", warnings);
     }
     if (root["preprocess"]) loadPreprocess(root["preprocess"], config.preprocess, warnings);
