@@ -1,0 +1,199 @@
+# GenZ-LIO fixed-map pure localization (run_loclite_online), Livox Mid-360.
+#
+#   ros2 run genz_lio run_loclite_online --config <this file> --map_path <dir with global.pcd>
+#
+# The odometry sections are the GenZ-LIO mid360 configuration (same file format
+# as config/default/*.yaml). system / fixed_map / reloc and runtime/publish_* are
+# the localization interface of Super-LIO's config/loclite_livox.yaml, nested:
+# Super-LIO's `reloc.fc.max_rmse` is reloc: fc: max_rmse here, and it can be
+# overridden the same way with `--ros-args -p reloc.fc.max_rmse:=0.1`.
+
+common:
+    map_frame_id: "map"
+    lidar_topic: "/livox/lidar"
+    imu_topic: "/livox/imu"
+    # Added to every LiDAR stamp before processing, in seconds.
+    time_offset: 0.0
+    # ROS 2 only. Reliable transport still has a finite KEEP_LAST history:
+    # delayed callbacks can lose samples when qos_depth is exceeded. Size the
+    # queue for the IMU rate and replay speed. 1000 provides headroom for bursts,
+    # not a cure for sustained overload. This depth applies to BOTH LiDAR and
+    # IMU: queued large clouds can consume substantial memory. Reduce on small
+    # systems. DDS transport buffers are separate (see ../dds/fastdds_local.xml).
+    # Use best_effort if the driver publishes that way and will not connect to
+    # a reliable subscriber.
+    qos_reliability: reliable
+    qos_depth: 1000
+
+runtime:
+    # Worker count for correspondence search and map updates. 0 uses the
+    # detected physical-core count; a positive value sets an explicit limit.
+    # This does not set CPU affinity. More workers are not always faster.
+    max_threads: 0
+    # Localization outputs and input watchdog [s].
+    publish_tf: true
+    publish_odom: true
+    publish_path: true
+    imu_timeout_sec: 1.0
+    lidar_timeout_sec: 2.0
+
+preprocess:
+    # livox | livox_pcl | velodyne | ouster | hesai | robosense
+    lidar_type: livox
+    scan_line: 4
+    scan_rate: 10        # [Hz], spinning LiDARs only
+    blind_min: 0.3       # [m] drop returns closer than this
+    blind_max: 70.0      # [m] drop returns farther than this
+    point_filter_num: 1  # keep every n-th point
+
+mapping:
+    max_iteration: 4  # ESIKF iterations per scan
+    down_sample_size: 0.25
+
+    # Root voxel edge length, d_root. Sets the octree root cell and feeds the
+    # discretization variance of the point-to-point covariance.
+    voxel_size: 1.0
+    max_layer: 4
+    layer_point_size: [5, 5, 5, 5, 5]
+    planar_threshold: 0.001  # [m^2] upper bound on the smallest covariance eigenvalue
+    sigma_num: 3.0    # point-to-plane residual gate
+    max_points_size: 100
+    max_mature_points_size: 100
+    # Unused in localization: the fixed map is never pruned.
+    map_range: -1.0
+
+    # LiDAR pose in the IMU body frame (p_imu = R * p_lidar + t). Livox Mid-360
+    # built-in IMU translation; a wrong extrinsic shows up as a rotation-dependent
+    # bias, not as noise.
+    extrinsic_est_en: false
+    extrinsic_t: [-0.011, -0.02329, 0.04412]
+    extrinsic_r: [1.0, 0.0, 0.0,
+                  0.0, 1.0, 0.0,
+                  0.0, 0.0, 1.0]
+
+# Scale-aware adaptive voxelization (paper Sec. IV).
+adaptive_voxelization:
+    enable: true
+    window_size: 5          # N_w, scans the scale indicator averages over
+    scale_threshold: 30.0   # tau_m [m], scale at which the setpoint saturates
+    setpoint_exponent: 2    # p, must exceed 1 for a smooth approach to N_max
+    min_points: 1000        # N_min, setpoint in the most confined scenes
+    max_points: 4000        # N_max, setpoint once the scene is open
+    error_sensitivity: 0.1  # lambda_p, normalizes the tracking error
+    error_rate_sensitivity: 0.2
+    p_gain_min: 5.0e-6
+    p_gain_max: 5.0e-5
+    d_gain_min: 5.0e-8
+    d_gain_max: 5.0e-7
+
+# Hybrid-metric state update (paper Sec. V-E).
+hybrid_metric:
+    enable: true
+    # lambda_po in eq. (30): R_comb = lambda_po * (R_norm + R_disc). Balances the
+    # point-to-point covariance, which comes from a single correspondence,
+    # against the point-to-plane one, fitted from many points. The single most
+    # sensitive parameter in the system.
+    lambda_po: 0.05
+    sigma_num: 3.0  # point-to-point residual gate
+    # How many points a root voxel keeps as candidates for the point-to-point
+    # search. More candidates means a better match and a slower search.
+    max_points_per_voxel: 128
+    # Each time a voxel subdivides, a child keeps its parent's budget divided by
+    # this, so the candidates thin out as the cells get smaller.
+    reduction_ratio: 4
+    # The point-to-point gate is scaled by each point's own range and widened by
+    # the motion the filter has had to correct, so a distant return is judged
+    # against a looser bound than a near one.
+    adaptive_threshold:
+        initial_threshold: 0.5
+        max_range_motion: 100.0
+
+noise_model:
+    # Generic starting values, NOT calibration for any named LiDAR/IMU.
+    # Set these here for the actual sensor pair. The LiDAR
+    # range/angle values are squared internally; IMU values enter the process
+    # covariance directly. Do not copy datasheet noise densities without
+    # checking their units and the estimator's convention.
+    ranging_cov: 0.04  # [m] LiDAR range noise
+    angle_cov: 0.1     # [deg] LiDAR bearing noise
+    acc_cov: 0.2
+    gyr_cov: 0.05
+    b_acc_cov: 0.0043
+    b_gyr_cov: 0.000266
+
+
+# Fixed map -> voxel map: downsample [m] (<= 0 keeps every point) and the
+# isotropic covariance [m^2] given to each map point. mapping/voxel_size is the
+# root voxel; it needs more than layer_point_size[0] map points to fit a plane.
+fixed_map:
+    voxel_size: 0.1
+    point_cov: 0.0004
+    global_pcd: ""
+
+# Fixed-map localization interface. --map_path overrides system/map_path, which
+# names a directory containing global.pcd; fixed_map/global_pcd is the fallback.
+system:
+    map_path: ""
+    lidar_frame_id: "livox_frame"
+    base_frame_id: "livox_frame"
+    level_frame_id: "level_frame"
+    # T_base_lidar; translation in metres, roll/pitch/yaw in radians.
+    base_to_lidar_x: 0.0
+    base_to_lidar_y: 0.0
+    base_to_lidar_z: 0.0
+    base_to_lidar_roll: 0.0
+    base_to_lidar_pitch: 0.0
+    base_to_lidar_yaw: 0.0
+
+# Initialization against the fixed map (keep the device still while it runs).
+#   /initialpose: guess -> NDT -> GenZ-ICP -> FC
+#   no initial pose (startup / after LOST): cold start
+#     1. map origin with yaw hypotheses -> NDT -> GenZ-ICP -> FC
+#     2. if none passes: KISS-Matcher candidates -> NDT -> GenZ-ICP -> FC
+# An /initialpose received at any time takes over from the cold start.
+reloc:
+    cold_start:
+        enable: true
+        max_attempts: 0          # 0 = keep retrying until /initialpose
+    origin_prior:
+        enable: true
+        x: 0.0                   # IMU position where the device usually starts
+        y: 0.0
+        z: 0.0
+        yaw_step_deg: 45.0
+        max_delta_trans: 3.0
+    kiss:
+        voxel_sizes: [0.25, 0.3, 0.4]  # one KISS run (= one candidate) per size
+        use_quatro: true               # yaw + translation only
+        target_pre_voxel: 0.2
+        max_target_points: 800000
+        min_rotation_inliers: 0        # FC is the real gate
+        min_final_inliers: 0
+        min_agreeing_candidates: 2     # passing KISS candidates that must agree
+        max_tilt_deg: 10.0
+    genz:
+        map_voxel: 0.3
+        max_points_per_voxel: 1
+        planarity_threshold: 0.1
+        source_voxel: 0.2
+        max_iterations: 100
+        convergence: 0.0001
+        coarse_max_corr: 1.0
+        fine_max_corr: 0.3
+    # FC false-positive barrier: all checks must pass.
+    fc:
+        map_voxel: 0.1
+        inlier_dist: 0.3
+        min_inlier_ratio: 0.85
+        wall_band_min: -0.5            # wall band relative to the sensor height
+        wall_band_max: 1.0
+        min_wall_inlier_ratio: 0.8
+        min_coverage: 0.5              # of observed 45-degree sectors
+        min_sector_points: 10
+        max_rmse: 0.08
+        max_delta_trans_manual: 5.0
+        max_delta_rot_deg_manual: 45.0
+        max_delta_trans_kiss: 3.0
+        max_delta_rot_deg_kiss: 30.0
+        ambiguity_trans: 1.0           # passing candidates further apart -> reject all
+        ambiguity_rot_deg: 10.0

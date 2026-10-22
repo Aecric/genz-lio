@@ -42,6 +42,9 @@ public:
 
     std::size_t pendingScans() const;
 
+    /// Drops both streams and starts a new epoch, as when stamps go backwards.
+    void clear();
+
 private:
     void resetLocked();
     mutable std::mutex mutex_;

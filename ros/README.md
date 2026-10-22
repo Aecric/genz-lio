@@ -618,6 +618,19 @@ Parameter tuning guidance is available in the [parameter guide](config/parameter
 
 <a id="additional-options"></a>
 
+## + Fixed-map localization (ROS 2)
+
+`run_loclite_online` tracks an existing `global.pcd` without updating it, with the
+command line, `/hikari_loc/*` outputs, TF, `/initialpose` and cold-start
+relocalization (origin prior → KISS-Matcher → NDT → GenZ-ICP → FC) of Super-LIO's
+pure-localization mode:
+
+```bash
+ros2 launch genz_lio loclite.launch.py map_path:=/path/to/map_dir
+```
+
+See [localization.md](localization.md) (中文).
+
 ## + Additional options
 
 ### Save odometry

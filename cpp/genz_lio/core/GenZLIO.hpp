@@ -81,6 +81,21 @@ public:
     /// Discards the map and the filter state, keeping the configuration.
     void reset();
 
+    // ---- Fixed-map localization (run_loclite_online) ----
+    /// Builds the voxel map once from world-frame points (e.g. a saved
+    /// global.pcd). Scans are then registered against it but never folded in,
+    /// and map_range pruning is off.
+    void setFixedMap(const std::vector<Vec3> &points, double point_cov);
+    bool fixedMap() const { return fixed_map_; }
+
+    /// Restarts the filter (IMU initialization included). A fixed map is kept;
+    /// otherwise the map is discarded as in reset().
+    void resetOdometry();
+
+    /// Starts the odometry at world_imu instead of the identity. Applied as soon
+    /// as the IMU is initialized, with gravity rotated into the world frame.
+    void setInitialPose(const Pose &world_imu);
+
     bool initialized() const { return imu_processor_.initialized() && map_built_; }
     state_ikfom state() const { return kf_.get_x(); }
     EsekfState::cov covariance() const { return kf_.get_P(); }
@@ -105,6 +120,8 @@ public:
 
 private:
     void clearMap();
+    void resetFilter();
+    void applyInitialPose();
     void seedMap(const PointCloud &cloud);
     void foldScanIntoMap(const PointCloud &cloud, const std::vector<Mat3> &body_covariances);
     std::vector<Mat3> bodyCovariances(const PointCloud &cloud) const;
@@ -120,6 +137,9 @@ private:
     EsekfState kf_;
     VoxelMapType voxel_map_;
     bool map_built_ = false;
+    bool fixed_map_ = false;
+    bool has_initial_pose_ = false;
+    Pose initial_pose_;
     bool track_map_ = false;
     bool display_map_reset_ = false;
     tsl::robin_map<VoxelKey, bool, VoxelHash> display_map_changes_;
